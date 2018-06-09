@@ -1,10 +1,13 @@
 # coding=utf-8
 import os
-import requests
 import json
-import urllib
 import time
 import sqlite3
+import sys
+if sys.version_info.major == 2:
+    from urllib import urlopen
+else:
+    from urllib.request import urlopen
 
 MASTER_PATH = "https://android.magi-reco.com/magica/resource/download/asset/master/"
 
@@ -25,15 +28,9 @@ FAILLIST = []
 JSON_LIST=[MAIN_JSON, VOICE_JSON, MOVIE_L_JSON, MOVIE_H_JSON, CHAR_LIST_JSON, FULLVOICE_JSON]
 DB="db.json"
 
-def get_json(url):
-    session = requests.session()
-    content = session.get(url).content
-    return json.loads(content)
-
 def read_json(name):
-    fjson = open(SAVE_DIR + name, 'r')
-    data = fjson.read()
-    fjson.close()
+    with open(SAVE_DIR + name, 'r') as f:
+        data = f.read()
     return json.loads(data)
 
 def makedir(path):
@@ -47,13 +44,19 @@ def download(item):
     retry = 3 # 重试次数
     while retry:
         try:
-            urllib.request.urlretrieve(MASTER_PATH + item, SAVE_DIR + item)
-            return 200 # 如果上面下载失败会抛出异常并忽略本句
-        except urllib.error.HTTPError as err:
-            if err.code == 403:
+            #if sys.version_info.major == 2:
+            #urllib.request.urlretrieve(MASTER_PATH + item, SAVE_DIR + item)
+            s = urlopen(MASTER_PATH + item)
+            if s.getcode() != 200:
                 retry -= 1
-            elif err.code == 404:
-                return 404
+                continue
+            with open(SAVE_DIR + item, "wb") as f:
+                f.write(s.read())
+            return 200 # 如果上面下载失败会抛出异常并忽略本句
+        except KeyboardInterrupt:
+            raise KeyboardInterrupt
+        except:
+            retry -= 1
     FAILLIST.append(item)
     return 403
 
@@ -66,63 +69,59 @@ def main():
     flag = 1
     if os.path.exists(SAVE_DIR + CONFIG_JSON):
         print('[*] Checking update ...')
-        remote = get_json(MASTER_PATH + CONFIG_JSON)
         local = read_json(CONFIG_JSON)
+        remote = json.load(urlopen(MASTER_PATH + CONFIG_JSON))
         if local['version'] == remote['version']:
             print('[*] Asset up to date')
             flag = 0
+        else:
+            with open(SAVE_DIR + CONFIG_JSON, "wb") as f:
+                json.dump(remote, f, indent=4, separators=(', ', ': '))
+    else:
+        download(CONFIG_JSON)
     if flag:
         print('[*] Updating asset lists ...')
-        for item in ([CONFIG_JSON] + JSON_LIST):
-            print('[-] Updating list %s ...' % item)
+        for item in (JSON_LIST):
+            print('[-] Updating list %s ...' % str(item))
             download(item)
-    #for fjson in [MAIN_JSON, VOICE_JSON, MOVIE_H_JSON]:
-    #for fjson in [MOVIE_L_JSON]:
-    for fjson in JSON_LIST:
-        print('[*] Loading %s ...' % fjson)
-        lst = read_json(fjson)
-        print('[-] Found %d items' % len(lst))
-        cnt = 0
-        for p in lst:
-            cnt += 1
-            #if os.path.exists(RESOURCE_DIR + p['path']):
-                # Check md5/ Check in db
-            #    print('[@] Found %s aleady exists, count %d/%d ' % (p['path'], cnt, len(lst)))
-            #    continue
-            if (fjson+RESOURCE_DIR + p['path']) in db and db[fjson+RESOURCE_DIR + p['path']] == p['md5']:
-                print('[@] Found %s aleady exists, count %d/%d ' % (p['path'], cnt, len(lst)))
-                continue
-            print('[@] Downloading %s, count %d/%d ' % (p['path'], cnt, len(lst)), end='')
-            makedir(RESOURCE_DIR + p['path'])
-            # cntp = 1
-            if len(p['file_list']) > 1 or p['file_list'][0]['url'] != p['path']:
-                #fout = open(RESOURCE_DIR + p['path'], 'wb')
-                for part in p['file_list']:
-                    # print('%s' % (BASE_URL + part['url']))
-                    #print('.', end='')
-                    # print('[ ] Downloading %s, part %d/%d' % (part['url'], cntp, len(p['file_list'])))
-                    # cntp += 1
-                    makedir(RESOURCE_DIR + part['url'])
-                    # urllib.request.urlretrieve(BASE_URL + part['url'], RESOURCE_DIR + part['url'])
-                    download("resource/" + part['url'])
-                    #pout = open(RESOURCE_DIR + part['url'], 'rb')
-                    #fout.write(pout.read(part['size']))
-                    #pout.close()
-                #fout.close()
-            else:
-                download("resource/" + p['path'])
-            db[fjson+RESOURCE_DIR + p['path']] = p['md5']
-            print()
-
-    f=open(SAVE_DIR + DB,"w")
-    f.write(json.dumps(db, ensure_ascii=False, sort_keys=True))
-    f.close()
+    try:
+        #for fjson in [MAIN_JSON, VOICE_JSON, MOVIE_H_JSON]:
+        #for fjson in [MOVIE_L_JSON]:
+        for fjson in JSON_LIST:
+            print('[*] Loading %s ...' % str(fjson))
+            lst = read_json(fjson)
+            print('[-] Found %d items' % len(lst))
+            cnt = 0
+            for p in lst:
+                cnt += 1
+                if (fjson+RESOURCE_DIR + p['path']) in db and db[fjson+RESOURCE_DIR + p['path']] == p['md5']:
+                    print('[@] Found %s aleady exists, count %d/%d ' % (str(p['path']), cnt, len(lst)))
+                    continue
+                print('[@] Downloading %s, count %d/%d ' % (str(p['path']), cnt, len(lst)))
+                makedir(RESOURCE_DIR + p['path'])
+                cntp = 1
+                if len(p['file_list']) > 1 or p['file_list'][0]['url'] != p['path']:
+                    with open(RESOURCE_DIR + p['path'], 'wb') as fout:
+                        for part in p['file_list']:
+                            # print('%s' % (BASE_URL + str(part['url'])))
+                            print('[ ] Downloading %s, part %d/%d' % (str(part['url']), cntp, len(p['file_list'])))
+                            cntp += 1
+                            makedir(RESOURCE_DIR + part['url'])
+                            download("resource/" + part['url'])
+                            with open(RESOURCE_DIR + part['url'], 'rb') as pout:
+                                fout.write(pout.read(part['size']))
+                else:
+                    download("resource/" + p['path'])
+                db[fjson+RESOURCE_DIR + p['path']] = p['md5']
+    except KeyboardInterrupt:
+        pass
+    with open(SAVE_DIR + DB,"w") as f:
+        f.write(json.dumps(db, ensure_ascii=False, indent=2, sort_keys=True))
     if len(FAILLIST) > 0:
-        fout = open(SAVE_DIR + 'fail.log', 'w')
-        fout.writelines("Log time: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + "\n")
-        for item in FAILLIST:
-            fout.writelines(item + "\n")
-        fout.close()
+        with open(SAVE_DIR + 'fail.log', 'a') as f:
+            f.writelines("Log time: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + "\n")
+            for item in FAILLIST:
+                f.writelines(item + "\n")
 
 if __name__ == '__main__':
     main()
