@@ -18,7 +18,7 @@ CHAR_LIST_JSON="asset_char_list.json"
 FULLVOICE_JSON="asset_fullvoice.json"
 
 BASE_URL = MASTER_PATH + "resource/"
-SAVE_DIR = "D:\magireco_data\"
+SAVE_DIR = '/root/magireco_data/'
 RESOURCE_DIR = SAVE_DIR + "resource/"
 FAILLIST = []
 
