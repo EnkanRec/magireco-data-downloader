@@ -94,7 +94,8 @@ def main():
             cnt = 0
             for p in lst:
                 cnt += 1
-                if (fjson+RESOURCE_DIR + p['path']) in db and db[fjson+RESOURCE_DIR + p['path']] == p['md5']:
+                key = "resource/" + p['path']
+                if (key) in db and db[key] == p['md5']:
                     print('[@] Found %s aleady exists, count %d/%d ' % (str(p['path']), cnt, len(lst)))
                     continue
                 print('[@] Downloading %s, count %d/%d ' % (str(p['path']), cnt, len(lst)))
@@ -111,8 +112,8 @@ def main():
                             with open(RESOURCE_DIR + part['url'], 'rb') as pout:
                                 fout.write(pout.read(part['size']))
                 else:
-                    download("resource/" + p['path'])
-                db[fjson+RESOURCE_DIR + p['path']] = p['md5']
+                    download(key)
+                db[key] = p['md5']
     except KeyboardInterrupt:
         pass
     with open(SAVE_DIR + DB,"w") as f:
