@@ -1,6 +1,7 @@
 # coding=utf-8
 import os
 import re
+import sys
 import json
 import time
 import sqlite3
@@ -8,18 +9,22 @@ import sqlite3
 import threading
 
 if os.name == 'nt':
-	grep = "find"
 	NUL = "NUL"
+	cat = "type "
 else:
-	grep = "grep"
 	NUL = "/dev/null"
+	cat = "cat "
 
 def makepath(p1, p2):
 	for i in p2.split('/'):
 		p1 = os.path.join(p1, i)
 	return p1
 
-CURL_CONFIG = '' # " --resolve android.magi-reco.com:443:2600:9000:20ab:7200:19:70ed:2780:93a1 -x socks5://127.0.0.1:1080 "
+quite = False
+verbose = False
+
+UA = "Mozilla/7.0 (Linux; Android 8.7.2; SONY-VAIO-MIUI Build/QBQQQ) AppleWebKit/555.1551 (KHTML, like Gecko) Chrome/51.1.1551.143 Crosswalk/23.53.589.4 Safari/538.99"
+CURL_CONFIG = ' -H "User-Agent: ' + UA + '" --resolve android.magi-reco.com:443:2600:9000:20ab:7200:19:70ed:2780:93a1 '#-x socks5://127.0.0.1:1080 '
 GAME_HOST = "https://android.magi-reco.com/"
 MASTER_PATH = GAME_HOST + "magica/resource/download/asset/master/"
 
@@ -44,12 +49,22 @@ SAVE_DIR = os.path.dirname(os.path.realpath(__file__))
 RESOURCE_DIR = makepath(SAVE_DIR, "resource")
 JSON_LIST = [MAIN_JSON, VOICE_JSON, MOVIE_H_JSON, CHAR_LIST_JSON, FULLVOICE_JSON, PROLOGUE_VOICE, PROLOGUE_MAIM]
 # JSON_LIST = [MOVIE_L_JSON]
+MAXTHREAD = 7
+d_piece = 0
+d_size = 0
+d_recv = 0
+d_count = 0
+lock = threading.Lock()
 FAILLIST = []
 db = sqlite3.connect(makepath(SAVE_DIR, 'madomagi.db'))
-if not db.execute("SELECT COUNT(*) FROM sqlite_master where type='table' and name='download_asset'").fetchone()[0]:
+cursor = db.execute("SELECT COUNT(*) FROM sqlite_master where type='table' and name='download_asset'")
+if not cursor.fetchone()[0]:
 	db.execute("CREATE TABLE download_asset(path char(128) primary key,md5 char(128))")
-if not db.execute("SELECT COUNT(*) FROM sqlite_master where type='table' and name='asset_json'").fetchone()[0]:
+cursor.close()
+cursor = db.execute("SELECT COUNT(*) FROM sqlite_master where type='table' and name='asset_json'")
+if not cursor.fetchone()[0]:
 	db.execute("CREATE TABLE asset_json(file char(128) primary key,etag char(128))")
+cursor.close()
 dbevent = []
 
 def select_all(table):
@@ -57,27 +72,32 @@ def select_all(table):
 	res = {}
 	for row in cursor:
 		res[row[0]] = row[1]
+	cursor.close()
 	return res
 
 def update(file, md5, type):
+	global d_piece, d_recv, d_count, d_size
 	if type:
 		table = 'download_asset'
 		key = 'path'
 		value = 'md5'
+		print('\r[@] %6.2f%% - %d/%d #//--' % (d_recv / d_size * 100, d_count, d_piece), file=sys.stderr, end='\r')
 	else:
 		table = 'asset_json'
 		key = 'file'
 		value = 'etag'
-	# DELETE *; INSERT
 	res = db.execute("SELECT * FROM {} WHERE {} = '{}'".format(table, key, file))
 	if len(res.fetchall()):
-		db.execute("UPDATE {} SET {} = '{}' WHERE {} = '{}'".format(table, value, md5, key, file))
+		cursor = db.execute("UPDATE {} SET {} = '{}' WHERE {} = '{}'".format(table, value, md5, key, file))
 	else:
-		db.execute("INSERT INTO {} ({}, {}) VALUES ('{}', '{}')".format(table, key, value, file, md5))
+		cursor = db.execute("INSERT INTO {} ({}, {}) VALUES ('{}', '{}')".format(table, key, value, file, md5))
+	res.close()
+	cursor.close()
+	db.commit()
 
 def md5sum(path):
 	with os.popen('md5sum ' + path + ' | cut -d " " -f 1') as f:
-		return f.read()[1:-1]
+		return f.read().strip()
 
 def fsize(path):
 	return os.stat(path).st_size
@@ -93,7 +113,7 @@ def errorCheck():
 
 # type 0: json; 1: item; 2: part;
 def download(item, type = 0, md5 = ""):
-	global FAILLIST, dbevent
+	global d_recv, d_count, FAILLIST, dbevent
 	try:
 		path = os.path.dirname(makepath(SAVE_DIR, item))
 		if not os.access(path, os.F_OK):
@@ -104,42 +124,50 @@ def download(item, type = 0, md5 = ""):
 		raise
 	path = makepath(SAVE_DIR, item)
 	try:
-		with os.popen('curl -v -o "' + path + '" "' + MASTER_PATH + item + '"' + CURL_CONFIG + '--retry 3 2>&1') as f:
+		with os.popen('curl -v -o "' + path + '" "' + MASTER_PATH + item + '"' + CURL_CONFIG + ' 2>&1') as f:
 			head = f.read()
 		lm = re.search(r'Last-Modified: (.*)\n', head, re.I)[1]
 		etag = re.search(r'ETag: (.*)\n', head, re.I)[1]
-		cl = re.search(r'Content-Length: (.*)\n', head, re.I)[1]
-		if etag == ERRORTAG or int(cl) == ERRORLEN:
-			# raise InterruptedError
+		cl = int(re.search(r'Content-Length: (.*)\n', head, re.I)[1])
+		lock.acquire()
+		d_recv += cl
+		d_count += 1
+		lock.release()
+		if etag == ERRORTAG or cl == ERRORLEN:
 			FAILLIST.append(item)
-			return -1
+			return 403
 		if type == 0:
-			# update(item, etag, False)
-			dbevent.append(threading.Thread(target=update, args=(item, etag, False, )))
+			if MAXTHREAD > 1:
+				dbevent.append(threading.Thread(target=update, args=(item, etag, False, )))
+			else:
+				update(item, etag, False)
 		else:
 			if type == 1:
-				# md5 = md5sum(path)
-				# update(item, md5, True)
-				dbevent.append(threading.Thread(target=update, args=(item, md5, True, )))
+				if MAXTHREAD > 1:
+					dbevent.append(threading.Thread(target=update, args=(item, md5, True, )))
+				else:
+					update(item, md5, True)
 		os.system('touch ' + path + ' -d "' + lm + '"')
 		return 0
 	except KeyboardInterrupt:
-		raise KeyboardInterrupt
+		raise
 	except:
 		FAILLIST.append(item)
 	return -1
 
 def download_p(i):
 	global dbevent
-	cmd = 'cat '
+	cmd = cat
 	threads_list = []
 	for p in i['file_list']:
 		key = "resource/" + p['url']
-		# download(key, 2)
-		t = threading.Thread(target=download, args=(key, 2, ))
-		threads_list.append(t)
-		t.start()
-		while threading.activeCount() > 15: time.sleep(.5)
+		if MAXTHREAD > 1:
+			t = threading.Thread(target=download, args=(key, 2, ))
+			threads_list.append(t)
+			t.start()
+			while threading.activeCount() > MAXTHREAD: time.sleep(.5)
+		else:
+			download(key, 2)
 		cmd += '"' + makepath(SAVE_DIR, key) + '" '
 	for t in threads_list:
 		t.join()
@@ -149,8 +177,10 @@ def download_p(i):
 	# for p in i['file_list']:
 		# os.system('cat ' + SAVE_DIR + "resource/" + p['path'] + ' >> ' + SAVE_DIR + "resource/" + i['path'])
 	if md5sum(path) == i['md5']:
-		# update("resource/" + i['path'], i['md5'], True)
-		dbevent.append(threading.Thread(target=update, args=("resource/" + i['path'], i['md5'], True, )))
+		if MAXTHREAD > 1:
+			dbevent.append(threading.Thread(target=update, args=("resource/" + i['path'], i['md5'], True, )))
+		else:
+			update("resource/" + i['path'], i['md5'], True)
 
 def human_int(int):
 	cls = ['', 'k', 'M', 'G', 'T', 'P']
@@ -167,14 +197,14 @@ def read_json(item):
 		return json.load(f)
 
 def main():
+	global d_count, d_recv, d_piece, d_size
 	errorCheck()
 	flag = 1
 	path = makepath(SAVE_DIR, CONFIG_JSON)
 	if os.path.exists(path):
 		print('[*] Checking update ...')
 		local = read_json(path)
-		etag = download(CONFIG_JSON)
-		if not ~etag:
+		if download(CONFIG_JSON):
 			with open(path, 'w') as f:
 				json.dump(local, f)
 			print("[x] Can't access resources, try a proxy." )
@@ -190,18 +220,19 @@ def main():
 		print('[*] Updating asset lists ...')
 		for item in (JSON_LIST + [MOVIE_L_JSON]):
 			print('[-] Updating list %s ...' % str(item))
-			# download(item)
-			t = threading.Thread(target=download, args=(item, ))
-			threads_list.append(t)
-			t.start()
+			if MAXTHREAD > 1:
+				t = threading.Thread(target=download, args=(item, ))
+				threads_list.append(t)
+				t.start()
+			else:
+				download(item)
 		for t in threads_list:
 			t.join()
 	try:
-		print('[>] Press Ctrl+C once to break')
 		exists = select_all('download_asset')
-		d_size = 0
 		d_list = []
-		# cntp = 0
+		d_recv = 0
+		d_count = 0
 		for fjson in JSON_LIST:
 			print('[*] Loading %s ...' % str(fjson))
 			lst = read_json(fjson)
@@ -210,47 +241,54 @@ def main():
 				key = "resource/" + i['path']
 				path = makepath(SAVE_DIR, key)
 				size = 0
+				cntp = 0
 				for p in i['file_list']:
-					# cntp += 1
+					cntp += 1
 					size += p['size']
-				if key not in exists or exists[key] != i['md5'] or not os.path.exists(path) or fsize(path) != size:# or md5sum(path) != i['md5']:
+				if not os.path.exists(path) or fsize(path) != size or key not in exists or exists[key] != i['md5']:# or md5sum(path) != i['md5']:
+					d_piece += cntp
 					d_size += size
 					d_list.append(i)
-		cnti = len(d_list)
-		print('[>] Total Download count: ' + str(cnti) + ' size: ' + human_int(d_size) + '. Y/n ')
-		readline = input()
-		if readline and readline != 'Y' and readline != 'y':
+					if verbose: print('[ ] ' + i['path'])
+		print('[>] Press Ctrl+C ONCE to break')
+		print('[>] Summary: ' + str(len(d_list)) + ' files, with ' + str(d_piece) + ' pieces, size: ' + human_int(d_size) + '. Y/n ', end='')
+		if quite:
+			k = ''
+			print()
+		else:
+			k = input()
+		if k and k != 'Y' and k != 'y':
 			print('[<] Abort.')
 			return
+		print('[*] Start download ...')
 		cnt = 0
 		threads_list = []
 		for i in d_list:
 			cnt += 1
-			print('[@] Downloading ' + i['path'] + ', count ' + str(cnt) + '/' + str(cnti) + ', %.')
 			if len(i['file_list']) > 1 or i['file_list'][0]['url'] != i['path']:
-				# download_p(i)
-				t = threading.Thread(target=download_p, args=(i, ))
+				if MAXTHREAD > 1: t = threading.Thread(target=download_p, args=(i, ))
+				else: download_p(i)
 			else:
 				key = "resource/" + i['path']
-				# download(key, 1, i['md5'])
-				t = threading.Thread(target=download, args=(key, 1, i['md5'], ))
-			threads_list.append(t)
+				if MAXTHREAD > 1: t = threading.Thread(target=download, args=(key, 1, i['md5'], ))
+				else: download(key, 1, i['md5'])
+			if MAXTHREAD > 1: threads_list.append(t)
+		for t in threads_list:
+			while threading.activeCount() > MAXTHREAD: time.sleep(.5)
 			t.start()
-			while threading.activeCount() > 15: time.sleep(.5)
+			if len(dbevent): dbevent.pop().run()
 		for t in threads_list:
 			t.join()
-			if len(dbevent):
-				dbevent.pop().run()
-		while len(dbevent):
-			dbevent.pop().run()
+			if len(dbevent): dbevent.pop().run()
+		while len(dbevent): dbevent.pop().run()
+		print()
 	except KeyboardInterrupt:
+		print()
+		print('[<] Abort by user.')
 		pass
 	except:
-		db.commit()
-		db.close()
+		print('[x] Runtime Error')
 		raise
-	db.commit()
-	db.close()
 	global FAILLIST
 	if len(FAILLIST) > 0:
 		with open(makepath(SAVE_DIR, 'fail.log'), 'w') as f:
@@ -261,5 +299,20 @@ def main():
 				f.write(item + "\n")
 
 if __name__ == '__main__':
+	for i in sys.argv:
+		if i[0] == '-':
+			if i == '-h' or i == '--help':
+				print('Usage: python3 py3_down.py [-v|-y|-h] [MAXTHREAD]')
+				print('Magia Record mulit-thread data downloader, base on cURL.')
+				print('	-h, --help	Show this help.')
+				print('	-q, -y    	Quite mode, download without ask.')
+				print('	-v        	Verbose mode, show download list.')
+				print('	MAXTHREAD 	Maximum thread number. When 1 set to single thread mode.')
+				exit(0)
+			if i[1] == 'q' or i[1] == 'y': quite = True
+			if i[1] == 'v': verbose = True
+		else: 
+			if i.isdigit():
+				MAXTHREAD = int(i)
 	main()
 	exit(0)
