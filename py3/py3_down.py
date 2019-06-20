@@ -202,7 +202,7 @@ def main():
 	flag = 1
 	path = makepath(SAVE_DIR, CONFIG_JSON)
 	if os.path.exists(path):
-		print('[*] Checking update ...')
+		if not quite: print('[*] Checking update ...')
 		local = read_json(path)
 		if download(CONFIG_JSON):
 			with open(path, 'w') as f:
@@ -217,9 +217,9 @@ def main():
 		download(CONFIG_JSON)
 	if flag:
 		threads_list = []
-		print('[*] Updating asset lists ...')
+		if not quite: print('[*] Updating asset lists ...')
 		for item in (JSON_LIST + [MOVIE_L_JSON]):
-			print('[-] Updating list %s ...' % str(item))
+			if not quite: print('[-] Updating list %s ...' % str(item))
 			if MAXTHREAD > 1:
 				t = threading.Thread(target=download, args=(item, ))
 				threads_list.append(t)
@@ -234,9 +234,9 @@ def main():
 		d_recv = 0
 		d_count = 0
 		for fjson in JSON_LIST:
-			print('[*] Loading %s ...' % str(fjson))
-			lst = read_json(fjson)
-			print('[-] Found %d items' % len(lst))
+			if not quite: print('[*] Loading %s ...' % str(fjson))
+			lst = read_json(makepath(SAVE_DIR, fjson))
+			if not quite: print('[-] Found %d items' % len(lst))
 			for i in lst:
 				key = "resource/" + i['path']
 				path = makepath(SAVE_DIR, key)
@@ -250,16 +250,16 @@ def main():
 					d_size += size
 					d_list.append(i)
 					if verbose: print('[ ] ' + i['path'])
-		print('[>] Press Ctrl+C ONCE to break')
 		print('[>] Summary: ' + str(len(d_list)) + ' files, with ' + str(d_piece) + ' pieces, size: ' + human_int(d_size) + '. Y/n ', end='')
 		if quite:
-			k = ''
 			print()
 		else:
+			print(' Y/n ', end='')
 			k = input()
-		if k and k != 'Y' and k != 'y':
-			print('[<] Abort.')
-			return
+			if k and k != 'Y' and k != 'y':
+				print('[<] Abort.')
+				return
+			print('[>] Press Ctrl+C ONCE to break')
 		print('[*] Start download ...')
 		cnt = 0
 		threads_list = []
