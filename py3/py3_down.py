@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # coding=utf-8
 import os
 import re
@@ -24,23 +25,25 @@ quite = False
 verbose = False
 
 UA = "Mozilla/7.0 (Linux; Android 8.7.2; SONY-VAIO-MIUI Build/QBQQQ) AppleWebKit/555.1551 (KHTML, like Gecko) Chrome/51.1.1551.143 Crosswalk/23.53.589.4 Safari/538.99"
-CURL_CONFIG = ' -H "User-Agent: ' + UA + '" --resolve android.magi-reco.com:443:2600:9000:20ab:7200:19:70ed:2780:93a1 '#-x socks5://127.0.0.1:1080 '
-GAME_HOST = "https://android.magi-reco.com/"
-MASTER_PATH = GAME_HOST + "magica/resource/download/asset/master/"
+CURL_CONFIG = ' -H "User-Agent: ' + UA + '"'
+# CURL_CONFIG += ' --resolve android.magi-reco.com:443:2600:9000:20ab:7200:19:70ed:2780:93a1'
+HTTP_SSL = "https://"
+GAME_HOST = "android.magi-reco.com"
+RESOLVE = "2600:9000:20ab:7200:19:70ed:2780:93a1"
 
-CONFIG_JSON = "asset_config.json"
-
-MAIN_JSON = "asset_main.json"
-MOVIE_H_JSON = "asset_movie_high.json"
-MOVIE_L_JSON = "asset_movie_low.json"
-VOICE_JSON = "asset_voice.json"
-CHAR_LIST_JSON="asset_char_list.json"
-FULLVOICE_JSON="asset_fullvoice.json"
+MASTER_PATH = HTTP_SSL + GAME_HOST + "/magica/resource/download/asset/master/"
+CONFIG_JSON    = "asset_config.json"
+MAIN_JSON      = "asset_main.json"
+MOVIE_H_JSON   = "asset_movie_high.json"
+MOVIE_L_JSON   = "asset_movie_low.json"
+VOICE_JSON     = "asset_voice.json"
+CHAR_LIST_JSON = "asset_char_list.json"
+FULLVOICE_JSON = "asset_fullvoice.json"
 PROLOGUE_VOICE = "asset_prologue_voice.json"
-PROLOGUE_MAIM = "asset_prologue_main.json"
+PROLOGUE_MAIM  = "asset_prologue_main.json"
 
 # ERROR403 = BASE_URL + "image_web/common/logo/logo.png"
-ERROR403 = GAME_HOST
+ERROR403 = HTTP_SSL + GAME_HOST
 ERRORLEN = 6351
 ERRORTAG = '"d35a7bb0529c5095e8da9113c4ca5578"'
 
@@ -48,7 +51,6 @@ BASE_URL = MASTER_PATH + "resource/"
 SAVE_DIR = os.path.dirname(os.path.realpath(__file__))
 RESOURCE_DIR = makepath(SAVE_DIR, "resource")
 JSON_LIST = [MAIN_JSON, VOICE_JSON, MOVIE_H_JSON, CHAR_LIST_JSON, FULLVOICE_JSON, PROLOGUE_VOICE, PROLOGUE_MAIM]
-# JSON_LIST = [MOVIE_L_JSON]
 MAXTHREAD = 7
 d_piece = 0
 d_size = 0
@@ -106,7 +108,11 @@ def errorCheck():
 	global ERRORTAG, ERRORLEN
 	with os.popen('curl -I ' + ERROR403 + CURL_CONFIG + ' 2>' + NUL) as f:
 		head = f.read()
-	etag = re.search(r'ETag: (.*)\n', head, re.I)[1]
+	e = re.search(r'ETag: (.*)\n', head, re.I)
+	if not e:
+		print("[x] Network ERROR, check config.")
+		exit(-1)
+	etag = e[1]
 	cl = re.search(r'Content-Length: (.*)\n', head, re.I)[1]
 	ERRORTAG = etag
 	ERRORLEN = int(cl)
@@ -250,17 +256,17 @@ def main():
 					d_size += size
 					d_list.append(i)
 					if verbose: print('[ ] ' + i['path'])
-		print('[>] Summary: ' + str(len(d_list)) + ' files, with ' + str(d_piece) + ' pieces, size: ' + human_int(d_size) + '. Y/n ', end='')
+		print('[>] Summary: ' + str(len(d_list)) + ' files, with ' + str(d_piece) + ' pieces, size: ' + human_int(d_size) + '. ', end='')
 		if quite:
 			print()
 		else:
-			print(' Y/n ', end='')
+			print('Y/n? ', end='')
 			k = input()
 			if k and k != 'Y' and k != 'y':
 				print('[<] Abort.')
 				return
 			print('[>] Press Ctrl+C ONCE to break')
-		print('[*] Start download ...')
+		if not quite: print('[*] Start download ...')
 		cnt = 0
 		threads_list = []
 		for i in d_list:
@@ -282,6 +288,7 @@ def main():
 			if len(dbevent): dbevent.pop().run()
 		while len(dbevent): dbevent.pop().run()
 		print()
+		print('[.] Finished.')
 	except KeyboardInterrupt:
 		print()
 		print('[<] Abort by user.')
@@ -298,21 +305,99 @@ def main():
 				print("[x] " + item)
 				f.write(item + "\n")
 
+def de(t):
+	t = t.lower()
+	if t == 'a' or t == 'all':
+		return [MAIN_JSON, VOICE_JSON, MOVIE_L_JSON, MOVIE_H_JSON, CHAR_LIST_JSON, FULLVOICE_JSON, PROLOGUE_VOICE, PROLOGUE_MAIM]
+	if t == 'm' or t == 'ma' or t == 'main':
+		return [MAIN_JSON]
+	if t == 'v' or t == 'vo' or t == 'voice':
+		return [VOICE_JSON]
+	if t == 'f' or t == 'fv' or t == 'fullvoice':
+		return [FULLVOICE_JSON]
+	if t == 'mh' or t == 'h' or t == 'movie_h' or t == 'high' or t == 'movie_high':
+		return [MOVIE_H_JSON]
+	if t == 'ml' or t == 'l' or t == 'movie_l' or t == 'low' or t == 'movie_low':
+		return [MOVIE_L_JSON]
+	if t == 'mov' or t == 'movie':
+		return [MOVIE_H_JSON, MOVIE_L_JSON]
+	if t == 'c' or t == 'char' or t == 'char_list':
+		return [CHAR_LIST_JSON]
+	if t == 'pv' or t == 'prologue_voice':
+		return [PROLOGUE_VOICE]
+	if t == 'pm' or t == 'prologue_main':
+		return [PROLOGUE_MAIM]
+	if t == 'p' or t == 'prologue':
+		return [PROLOGUE_MAIM, PROLOGUE_VOICE]
+	raise Exception("Unknow Asset")
+
+pram = ""
 if __name__ == '__main__':
 	for i in sys.argv:
+		if pram:
+			if pram == 'E':
+				JSON_LIST += de(i)
+			if pram == 'D':
+				for j in de(i):
+					if j in JSON_LIST: JSON_LIST.remove(j)
+			if pram == 'U':
+				UA = i
+			if pram == 'H':
+				GAME_HOST = i
+			if pram == 'r':
+				CURL_CONFIG += ' --resolve android.magi-reco.com:443:' + i
+			if pram == 'P':
+				CURL_CONFIG += ' -x ' + i
+			pram = ""
+			continue
 		if i[0] == '-':
 			if i == '-h' or i == '--help':
-				print('Usage: python3 py3_down.py [-v|-y|-h] [MAXTHREAD]')
+				print('Usage: python3 py3_down.py [-v|-y|-h] [-E asset|-D asset] [MAXTHREAD = 7]')
 				print('Magia Record mulit-thread data downloader, base on cURL.')
-				print('	-h, --help	Show this help.')
-				print('	-q, -y    	Quite mode, download without ask.')
-				print('	-v        	Verbose mode, show download list.')
-				print('	MAXTHREAD 	Maximum thread number. When 1 set to single thread mode.')
+				print('    -h, --help   Show this help.')
+				print('    -q, -y       Quite mode, download without ask.')
+				print('    -v           Show download list.')
+				print('    -Easset      Enable a asset.')
+				print('    -Dasset      Disable a asset.')
+				print('                     Avaliable assets:')
+				print('                 asset_main.json           : m, ma, main')
+				print('                 asset_voice.json          : v, vo, voice')
+				print('                 asset_fullvoice.json      : f, fv, fullvoice')
+				print('                 asset_movie_high.json     : h, mh, high, movie_h, movie_high')
+				print('                 asset_movie_low.json      : l, ml, low, movie_l, movie_low ')
+				print('                 BOTH TWO ABOVE            : mov, movie')
+				print('                 asset_char_list.json      : c, char, char_list')
+				print('                 asset_prologue_main.json  : pv, prologue_voice')
+				print('                 asset_prologue_voice.json : pm, prologue_main')
+				print('                 BOTH TWO ABOVE            : p, prologue')
+				print('                 ALL ABOVE                 : a, all')
+				print('                     Default with -E all -D low')
+				# print('    -U UserAgent Set custom UA.')
+				# print('    -H Host      Set Magireco domain.')
+				# print('    -r ip        Set ip for Magireco domain.')
+				# print('    -P proxy     Set proxy for curl.')
+				print('    MAXTHREAD    Maximum thread number. When 1 set to single thread mode.')
 				exit(0)
-			if i[1] == 'q' or i[1] == 'y': quite = True
-			if i[1] == 'v': verbose = True
+			if i == '-E' or i == '-D': # or i == '-U' or i == '-H' or i == '-r' or i == '-P':
+				pram = i[1:]
+				continue
+			if i[1] == 'q' or i[1] == 'y':
+				quite = True
+				continue
+			if i[1] == 'v':
+				verbose = True
+				continue
+			if i[1] == 'E':
+				JSON_LIST += de(i[2:])
+				continue
+			if i[1] == 'D':
+				for j in de(i[2:]):
+					if j in JSON_LIST: JSON_LIST.remove(j)
+				continue
 		else: 
 			if i.isdigit():
 				MAXTHREAD = int(i)
+	print('[' + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + ']')
 	main()
+	print('[' + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + ']')
 	exit(0)
