@@ -29,15 +29,17 @@ clean = False
 ttime = False
 log = True
 
+with os.popen('curl "https://l13-prod-gs-tw-mfsn2.komoejoy.com/maintenance/magica/config?type=1&platform=92&version=10005&gameid=1" 2>' + NUL) as f:
+	j = json.load(f)
+assetver = j['assetver']
+d = re.match(r'^(https?://)(.*)', j['resourceLocation'][0])
+HTTPS = d.group(1)
+GAME_HOST = d.group(2)
+
 UA = "Mozilla/5.0 (Linux; Android 7.1.2; PIXEL 2 XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/72.0.3626.121 Mobile Safari/537.36"
 CURL_CONFIG = ""
-HTTPS = "https://"
-GAME_HOST = "android.magi-reco.com"
 # RESOLVE = "2600:9000:2012:7200:19:70ed:2780:93a1"
 # MASTER_PATH = ""
-# ERROR403 = ""
-ERRORLEN = 6351
-ERRORTAG = '"d35a7bb0529c5095e8da9113c4ca5578"'
 
 CONFIG_JSON    = "asset_config.json"
 MAIN_JSON      = "asset_main.json"
@@ -100,19 +102,6 @@ def md5sum(path):
 def fsize(path):
 	return os.stat(path).st_size
 
-def errorCheck():
-	global ERRORTAG, ERRORLEN
-	with os.popen('curl -I ' + ERROR403 + CURL_CONFIG + ' 2>' + NUL) as f:
-		head = f.read()
-	e = re.search(r'ETag: (.*)\n', head, re.I)
-	if not e:
-		print("[x] Network ERROR, check config.")
-		exit(-1)
-	etag = e[1]
-	cl = re.search(r'Content-Length: (.*)\n', head, re.I)[1]
-	ERRORTAG = etag
-	ERRORLEN = int(cl)
-
 # type 0: json; 1: item; 2: part;
 def download(item, type = 0, md5 = ""):
 	global d_recv, d_count, FAILLIST, dbevent
@@ -130,20 +119,16 @@ def download(item, type = 0, md5 = ""):
 		with os.popen('curl -v -o "' + path + '" "' + MASTER_PATH + item + '"' + CURL_CONFIG + ' 2>&1') as f:
 			head = f.read()
 		lm = re.search(r'Last-Modified: (.*)\n', head, re.I)[1]
-		etag = re.search(r'ETag: (.*)\n', head, re.I)[1]
 		cl = int(re.search(r'Content-Length: (.*)\n', head, re.I)[1])
 		islock = lock.acquire()
 		d_recv += cl
 		d_count += 1
 		islock = lock.release()
-		if etag == ERRORTAG or cl == ERRORLEN:
-			FAILLIST.append(item)
-			return 403
 		if type == 0:
 			if MAXTHREAD > 1:
-				dbevent.append(threading.Thread(target=update, args=(item, etag, False, )))
+				dbevent.append(threading.Thread(target=update, args=(item, "", False, )))
 			else:
-				update(item, etag, False)
+				update(item, "", False)
 		elif type == 1:
 			if MAXTHREAD > 1:
 				dbevent.append(threading.Thread(target=update, args=(item, md5, True, )))
@@ -204,13 +189,12 @@ def read_json(item):
 
 def main():
 	global d_count, d_recv, d_piece, d_size
-	errorCheck()
 	flag = 1
-	path = makepath(SAVE_DIR, CONFIG_JSON)
+	path = makepath(SAVE_DIR, "resource/" + assetver + "/" + CONFIG_JSON)
 	if os.path.exists(path):
 		if not quite: print('[*] Checking update ...')
 		local = read_json(path)
-		if download(CONFIG_JSON):
+		if download("resource/" + assetver + "/" + CONFIG_JSON):
 			with open(path, 'w') as f:
 				json.dump(local, f)
 			print("[x] Can't access resources, try a proxy." )
@@ -220,18 +204,19 @@ def main():
 			print('[*] Asset up to date')
 			flag = 0
 	else:
-		download(CONFIG_JSON)
+		download("resource/" + assetver + "/" + CONFIG_JSON)
 	if flag:
 		threads_list = []
 		if not quite: print('[*] Updating asset lists ...')
-		for item in (JSON_LIST + [MOVIE_L_JSON]):
+		for item in (JSON_LIST):
 			if not quite: print('[-] Updating list %s ...' % str(item))
 			if MAXTHREAD > 1:
-				t = threading.Thread(target=download, args=(item, ))
+				t = threading.Thread(target=download, args=("resource/" + assetver + "/" + item, ))
 				threads_list.append(t)
 				t.start()
 			else:
-				download(item)
+				download("resource/" + assetver + "/" + item)
+				# os.system(mv + assetver + "/* .")
 		for t in threads_list:
 			t.join()
 	try:
@@ -241,7 +226,7 @@ def main():
 		d_count = 0
 		for fjson in JSON_LIST:
 			if not quite: print('[*] Loading %s ...' % str(fjson))
-			lst = read_json(makepath(SAVE_DIR, fjson))
+			lst = read_json(makepath(SAVE_DIR, "resource/" + assetver + "/" + fjson))
 			if not quite: print('[-] Found %d items' % len(lst))
 			for i in lst:
 				key = "resource/" + i['path']
@@ -280,11 +265,11 @@ def main():
 		threads_list = []
 		for i in d_list:
 			cnt += 1
-			if len(i['file_list']) > 1 or i['file_list'][0]['url'] != i['path']:
+			if len(i['file_list']) > 1:# or i['file_list'][0]['url'] != i['path']:
 				if MAXTHREAD > 1: t = threading.Thread(target=download_p, args=(i, ))
 				else: download_p(i)
 			else:
-				key = "resource/" + i['path']
+				key = "resource/" + i['file_list'][0]['url'] # i['path']
 				if MAXTHREAD > 1: t = threading.Thread(target=download, args=(key, 1, i['md5'], ))
 				else: download(key, 1, i['md5'])
 			if MAXTHREAD > 1: threads_list.append(t)
@@ -431,7 +416,6 @@ if __name__ == '__main__':
 	# Config
 	CURL_CONFIG += ' -H "User-Agent: ' + UA + '"'
 	MASTER_PATH = HTTPS + GAME_HOST + "/magica/resource/download/asset/master/"
-	ERROR403 = HTTPS + GAME_HOST
 	RESOURCE_DIR = makepath(SAVE_DIR, "resource")
 	db = sqlite3.connect(makepath(SAVE_DIR, 'madomagi.db'))
 	cursor = db.execute("SELECT COUNT(*) FROM sqlite_master where type='table' and name='download_asset'")
@@ -444,6 +428,8 @@ if __name__ == '__main__':
 	cursor.close()
 
 	# Strat
+	print('[@] Using host: ' + GAME_HOST)
+	print('[@] Assets version: ' + assetver)
 	print('[' + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + ']')
 	r = main()
 	print('[' + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + ']')
