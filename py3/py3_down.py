@@ -27,6 +27,7 @@ quite = False
 verbose = False
 clean = False
 ttime = False
+force = False
 log = True
 
 UA = "Mozilla/5.0 (Linux; Android 7.1.2; PIXEL 2 XL Build/NOF26V; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/72.0.3626.121 Mobile Safari/537.36"
@@ -207,7 +208,7 @@ def main():
 	errorCheck()
 	flag = 1
 	path = makepath(SAVE_DIR, CONFIG_JSON)
-	if os.path.exists(path):
+	if not force and os.path.exists(path):
 		if not quite: print('[*] Checking update ...')
 		local = read_json(path)
 		if download(CONFIG_JSON):
@@ -244,6 +245,7 @@ def main():
 			lst = read_json(makepath(SAVE_DIR, fjson))
 			if not quite: print('[-] Found %d items' % len(lst))
 			for i in lst:
+				if i in d_list: continue
 				key = "resource/" + i['path']
 				path = makepath(SAVE_DIR, key)
 				size = 0
@@ -382,6 +384,7 @@ if __name__ == '__main__':
 				print('    -r ip        Set ip for Magireco domain.')
 				print('    -P proxy     Set proxy for cURL.')
 				print('    -s dir       Set Save dir.')
+				print('    -f           Force update assets.')
 				print('    -E[asset]    Enable a asset.')
 				print('    -D[asset]    Disable a asset.')
 				print()
@@ -414,6 +417,9 @@ if __name__ == '__main__':
 				continue
 			if i[1] == 't':
 				ttime = True
+				continue
+			if i[1] == 'f':
+				force = True
 				continue
 			if i[1] == 'v':
 				verbose = True
