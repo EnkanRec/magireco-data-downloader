@@ -107,12 +107,11 @@ def errorCheck():
 		head = f.read()
 	e = re.search(r'ETag: (.*)\n', head, re.I)
 	if not e:
-		print("[x] Network ERROR, check config.")
-		exit(-1)
-	etag = e[1]
-	cl = re.search(r'Content-Length: (.*)\n', head, re.I)[1]
+		print("[W] ETag not found, keep going.")
+	else: etag = e[1]
+	cl = re.search(r'Content-Length: (.*)\n', head, re.I)
 	ERRORTAG = etag
-	ERRORLEN = int(cl)
+	if cl: ERRORLEN = int(cl[1])
 
 # type 0: json; 1: item; 2: part;
 def download(item, type = 0, md5 = ""):
@@ -131,15 +130,17 @@ def download(item, type = 0, md5 = ""):
 		with os.popen('curl -v -o "' + path + '" "' + MASTER_PATH + item + '"' + CURL_CONFIG + ' 2>&1') as f:
 			head = f.read()
 		lm = re.search(r'Last-Modified: (.*)\n', head, re.I)[1]
-		etag = re.search(r'ETag: (.*)\n', head, re.I)[1]
-		cl = int(re.search(r'Content-Length: (.*)\n', head, re.I)[1])
+		etag = re.search(r'ETag: (.*)\n', head, re.I)
+		if not etag or etag == ERRORTAG:
+			FAILLIST.append(item)
+			return 403
+		else: etag = etag[1]
+		cl = re.search(r'Content-Length: (.*)\n', head, re.I)
+		cl = int(cl[1]) if cl else 0
 		islock = lock.acquire()
 		d_recv += cl
 		d_count += 1
 		islock = lock.release()
-		if etag == ERRORTAG or cl == ERRORLEN:
-			FAILLIST.append(item)
-			return 403
 		if type == 0:
 			if MAXTHREAD > 1:
 				dbevent.append(threading.Thread(target=update, args=(item, etag, False, )))
@@ -359,7 +360,7 @@ if __name__ == '__main__':
 				if t:
 					GAME_HOST = t.group(2)
 					HTTPS = "https://" if t.group(1) else "http://"
-				else: GAME_HOST = t.group(1)
+				else: GAME_HOST = i
 			elif pram == 'r':
 				if HTTPS == "http://": CURL_CONFIG += ' --resolve ' + GAME_HOST + ':80:' + i
 				else:                  CURL_CONFIG += ' --resolve ' + GAME_HOST + ':443:' + i
